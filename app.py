@@ -73,8 +73,9 @@ def sauvegarder_recette(data):
 tabs = st.tabs(["📸 Scanner & Liens", "📖 Ma Collection"])
 
 # --- ONGLET 1 : SCAN & LIENS WEB ---
+# --- ONGLET 1 : SCAN, LIENS & TEXTE ---
 with tabs[0]:
-    mode = st.radio("Comment veux-tu ajouter ta recette ?", ["🔗 Via un Lien (Marmiton, YouTube...)", "📸 Via des Photos"])
+    mode = st.radio("Comment veux-tu ajouter ta recette ?", ["📸 Via des Photos", "🔗 Via un Lien (Sites web, Blogs...)", "📝 Via un Texte (Copier-coller)"])
     
     prompt_base = """
     Analyse les informations suivantes qui constituent une recette de cuisine.
@@ -89,44 +90,18 @@ with tabs[0]:
     }
     """
 
-    if mode == "🔗 Via un Lien (Marmiton, YouTube...)":
+    if mode == "🔗 Via un Lien (Sites web, Blogs...)":
+        st.write("Fonctionne bien pour Marmiton ou les blogs (mais bloqué par YouTube/Instagram).")
         url = st.text_input("Colle le lien de la recette ici :")
         if st.button("🌐 Extraire la recette"):
             with st.spinner("L'IA navigue sur le web et lit la recette..."):
                 try:
-                    texte_extrait = ""
-                   # CAS 1 : YOUTUBE
-                    if "youtube.com" in url or "youtu.be" in url:
-                        match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
-                        if match:
-                            video_id = match.group(1)
-                            try:
-                                # Pour l'ancienne version de l'outil
-                                transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['fr', 'en'])
-                            except AttributeError:
-                                # CORRECTION : Pour la toute nouvelle version (2025/2026)
-                                api = YouTubeTranscriptApi()
-                                try:
-                                    # On cherche les sous-titres FR ou EN
-                                    transcript = api.list(video_id).find_transcript(['fr', 'en']).fetch()
-                                except:
-                                    # S'il n'y a que de l'auto-généré, on prend la valeur par défaut
-                                    transcript = api.fetch(video_id)
-                                    
-                            texte_extrait = " ".join([t['text'] for t in transcript])
-                        else:
-                            st.error("Lien YouTube invalide.")
-                    
-                    # CAS 2 : SITES WEB (Marmiton, Blogs...)
-                    else:
-                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                        response = requests.get(url, headers=headers)
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        # On récupère tout le texte de la page
-                        texte_extrait = soup.get_text(separator=' ', strip=True)
+                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                    response = requests.get(url, headers=headers, timeout=10)
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    texte_extrait = soup.get_text(separator=' ', strip=True)
 
                     if texte_extrait:
-                        # On envoie le texte extrait à Gemini (limité à 50 000 caractères pour éviter de saturer l'IA)
                         prompt_final = prompt_base + f"\n\nTexte à analyser :\n{texte_extrait[:50000]}"
                         rep = model.generate_content(prompt_final)
                         clean_json = rep.text.replace('```json', '').replace('```', '').strip()
@@ -134,12 +109,28 @@ with tabs[0]:
                         sauvegarder_recette(data)
                     else:
                         st.error("Je n'ai pas pu extraire de texte de ce lien.")
-
                 except Exception as e:
-                    st.error(f"Aïe, impossible de lire ce lien. Le site bloque peut-être l'accès. (Erreur: {e})")
+                    st.error(f"Le site bloque l'accès aux robots. Utilise le mode 'Via un Texte' ! (Erreur: {e})")
+
+    elif mode == "📝 Via un Texte (Copier-coller)":
+        st.write("Idéal pour **YouTube**, **Instagram**, ou les sites très sécurisés.")
+        texte_colle = st.text_area("Colle la description Insta, les sous-titres YouTube ou le texte brut ici :", height=200)
+        if st.button("✨ Analyser ce texte"):
+            if texte_colle:
+                with st.spinner("L'IA structure ton texte..."):
+                    try:
+                        prompt_final = prompt_base + f"\n\nTexte à analyser :\n{texte_colle[:50000]}"
+                        rep = model.generate_content(prompt_final)
+                        clean_json = rep.text.replace('```json', '').replace('```', '').strip()
+                        data = json.loads(clean_json)
+                        sauvegarder_recette(data)
+                    except Exception as e:
+                        st.error(f"Erreur lors de l'analyse : {e}")
+            else:
+                st.warning("Tu n'as rien collé !")
 
     else:
-        # MODE PHOTOS (Ton code existant)
+        # MODE PHOTOS
         st.write("Charge une ou plusieurs photos d'une même recette.")
         uploaded_files = st.file_uploader("Choisis tes images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
         
