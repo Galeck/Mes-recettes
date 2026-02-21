@@ -14,7 +14,22 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     st.error("⚠️ Clé API introuvable ! Pense à l'ajouter dans Settings > Secrets sur Streamlit.")
     st.stop()
+# --- CONNEXION API ---
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    
+    # --- ZONE DE DIAGNOSTIC (à supprimer plus tard) ---
+    st.warning("🔍 Modèles autorisés pour cette clé :")
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                st.write(f"- `{m.name}`")
+    except Exception as e:
+        st.error(f"Erreur de lecture des modèles : {e}")
+    # -------------------------------------------------
 
+    # On met un modèle temporaire le temps de lire la liste
+    model = genai.GenerativeModel('gemini-1.5-flash')
 # --- BASE DE DONNÉES ---
 def load_data():
     try:
