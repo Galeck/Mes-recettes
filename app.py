@@ -95,14 +95,24 @@ with tabs[0]:
             with st.spinner("L'IA navigue sur le web et lit la recette..."):
                 try:
                     texte_extrait = ""
-                    # CAS 1 : YOUTUBE
+                   # CAS 1 : YOUTUBE
                     if "youtube.com" in url or "youtu.be" in url:
-                        # On trouve l'ID de la vidéo
                         match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
                         if match:
                             video_id = match.group(1)
-                            # On récupère les sous-titres (français ou anglais par défaut)
-                            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['fr', 'en'])
+                            try:
+                                # Pour l'ancienne version de l'outil
+                                transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['fr', 'en'])
+                            except AttributeError:
+                                # CORRECTION : Pour la toute nouvelle version (2025/2026)
+                                api = YouTubeTranscriptApi()
+                                try:
+                                    # On cherche les sous-titres FR ou EN
+                                    transcript = api.list(video_id).find_transcript(['fr', 'en']).fetch()
+                                except:
+                                    # S'il n'y a que de l'auto-généré, on prend la valeur par défaut
+                                    transcript = api.fetch(video_id)
+                                    
                             texte_extrait = " ".join([t['text'] for t in transcript])
                         else:
                             st.error("Lien YouTube invalide.")
