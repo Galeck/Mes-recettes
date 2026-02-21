@@ -2,3 +2,4 @@ streamlit
 pandas
 Pillow
 google-generativeai>=0.7.0
+gspread
