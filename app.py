@@ -5,80 +5,83 @@ import google.generativeai as genai
 import json
 import datetime
 
-# --- CONFIGURATION API ---
-# Sur Streamlit Cloud, on utilise les "Secrets" pour cacher la clé
-try:
+st.set_page_config(page_title="CookSnap AI", page_icon="🍳", layout="centered")
+
+# --- CONNEXION API ---
+if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-except:
-    st.error("Clé API manquante ! Ajoute-la dans les Secrets de Streamlit.")
+    model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    st.error("⚠️ Clé API introuvable ! Pense à l'ajouter dans Settings > Secrets sur Streamlit.")
+    st.stop()
 
-model = genai.GenerativeModel('gemini-1.5-flash')
+# --- BASE DE DONNÉES ---
+def load_data():
+    try:
+        return pd.read_csv("my_recipes.csv")
+    except:
+        return pd.DataFrame(columns=["date", "nom", "catégorie", "ingrédients", "instructions"])
 
-# --- FONCTION MAGIQUE ---
-def analyser_recette(image_pil):
-    prompt = """
-    Analyse cette image de recette. 
-    Retourne uniquement un objet JSON avec exactement ces clés :
-    {
-      "nom": "Le titre de la recette",
-      "categorie": "Plat, Dessert, Entrée ou Boisson",
-      "ingredients": "liste des ingrédients",
-      "instructions": "étapes de préparation"
-    }
-    Si tu ne trouves pas de recette, réponds avec une erreur.
-    """
-    response = model.generate_content([prompt, image_pil])
-    # Nettoyage de la réponse pour extraire le JSON
-    text = response.text.replace('```json', '').replace('```', '').strip()
-    return json.loads(text)
+df = load_data()
 
 # --- INTERFACE ---
-st.set_page_config(page_title="CookSnap AI", page_icon="🧠")
-st.title("🧠 CookSnap Intelligent")
-
-if "df" not in st.session_state:
-    try:
-        st.session_state.df = pd.read_csv("my_recipes.csv")
-    except:
-        st.session_state.df = pd.DataFrame(columns=["date", "nom", "catégorie", "ingrédients", "instructions"])
-
+st.title("🍳 CookSnap Intelligent")
 tabs = st.tabs(["📸 Scanner", "📖 Ma Collection"])
 
 with tabs[0]:
-    file = st.file_uploader("Prends ta recette en photo", type=["jpg", "jpeg", "png"])
-    if file:
-        img = Image.open(file)
-        st.image(img, width=300)
+    uploaded_file = st.file_uploader("Prends une photo de la recette", type=["jpg", "jpeg", "png"])
+    
+    if uploaded_file:
+        img = Image.open(uploaded_file)
+        st.image(img, use_container_width=True)
         
-        if st.button("🚀 Analyser avec l'IA"):
-            with st.spinner("L'IA lit et organise ta recette..."):
+        if st.button("✨ Analyser la recette"):
+            with st.spinner("Lecture par l'IA en cours..."):
                 try:
-                    data = analyser_recette(img)
+                    prompt = """Analyse cette image de recette. 
+                    Retourne UNIQUEMENT un objet JSON valide avec ces clés exactes :
+                    {
+                      "nom": "Titre",
+                      "categorie": "Plat, Dessert, Entrée ou Boisson",
+                      "ingredients": "liste",
+                      "instructions": "étapes"
+                    }"""
+                    response = model.generate_content([prompt, img])
                     
-                    # Enregistrement
-                    new_recette = {
+                    # Nettoyage pour récupérer le JSON
+                    clean_json = response.text.replace('```json', '').replace('```', '').strip()
+                    data = json.loads(clean_json)
+                    
+                    # Sauvegarde
+                    new_row = {
                         "date": datetime.date.today(),
                         "nom": data['nom'],
                         "catégorie": data['categorie'],
                         "ingrédients": data['ingredients'],
                         "instructions": data['instructions']
                     }
-                    st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_recette])], ignore_index=True)
-                    st.session_state.df.to_csv("my_recipes.csv", index=False)
-                    st.success(f"Enregistré : {data['nom']} !")
+                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                    df.to_csv("my_recipes.csv", index=False)
+                    st.success(f"Recette '{data['nom']}' ajoutée !")
+                    
                 except Exception as e:
                     st.error(f"Erreur d'analyse : {e}")
 
 with tabs[1]:
     search = st.text_input("🔍 Rechercher...")
-    # Affichage propre avec colonnes
-    for i, row in st.session_state.df.iloc[::-1].iterrows():
-        if search.lower() in row['nom'].lower() or search.lower() in str(row['ingrédients']).lower():
-            with st.expander(f"{row['nom']} ({row['catégorie']})"):
+    if not df.empty:
+        mask = df['nom'].str.contains(search, case=False) | df['ingrédients'].str.contains(search, case=False)
+        for i, row in df[mask].iloc[::-1].iterrows():
+            with st.expander(f"{row['catégorie']} | {row['nom']}"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.subheader("🛒 Ingrédients")
+                    st.markdown("**Ingrédients :**")
                     st.write(row['ingrédients'])
                 with col2:
-                    st.subheader("👨‍🍳 Préparation")
+                    st.markdown("**Instructions :**")
                     st.write(row['instructions'])
+                if st.button("Supprimer", key=f"del_{i}"):
+                    df.drop(i).to_csv("my_recipes.csv", index=False)
+                    st.rerun()
+    else:
+        st.info("Aucune recette pour le moment.")
