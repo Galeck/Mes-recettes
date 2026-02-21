@@ -6,6 +6,10 @@ import json
 import datetime
 import gspread
 import os
+import requests
+from bs4 import BeautifulSoup
+from youtube_transcript_api import YouTubeTranscriptApi
+import re
 
 st.set_page_config(page_title="CookSnap Cloud", page_icon="🍳", layout="centered")
 
@@ -47,7 +51,6 @@ def load_data():
     else:
         df = pd.DataFrame(data[1:], columns=data[0])
         df.columns = df.columns.str.lower()
-        # Si d'anciennes recettes n'ont pas de portions, on met 4 par défaut
         if 'portions' not in df.columns:
             df['portions'] = '4'
         return df
@@ -55,55 +58,100 @@ def load_data():
 if 'df' not in st.session_state:
     st.session_state.df = load_data()
 
+# --- FONCTION DE SAUVEGARDE (Pour éviter de répéter le code) ---
+def sauvegarder_recette(data):
+    ingredients_texte = "\n- ".join(data['ingredients']) if isinstance(data['ingredients'], list) else str(data['ingredients'])
+    instructions_texte = "\n- ".join(data['instructions']) if isinstance(data['instructions'], list) else str(data['instructions'])
+    aujourdhui = str(datetime.date.today())
+    nouvelle_ligne = [aujourdhui, str(data['nom']), str(data['categorie']), ingredients_texte, instructions_texte, str(data.get('portions', '4'))]
+    worksheet.append_row(nouvelle_ligne)
+    st.session_state.df = load_data()
+    st.success(f"Magique ! '{data['nom']}' sauvegardée pour {data.get('portions', 4)} personnes.")
+    st.balloons()
+
 # --- INTERFACE PRINCIPALE ---
-tabs = st.tabs(["📸 Scanner", "📖 Ma Collection"])
+tabs = st.tabs(["📸 Scanner & Liens", "📖 Ma Collection"])
 
-# --- ONGLET 1 : SCAN ---
+# --- ONGLET 1 : SCAN & LIENS WEB ---
 with tabs[0]:
-    st.write("Charge une ou plusieurs photos d'une même recette.")
-    uploaded_files = st.file_uploader("Choisis tes images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+    mode = st.radio("Comment veux-tu ajouter ta recette ?", ["🔗 Via un Lien (Marmiton, YouTube...)", "📸 Via des Photos"])
     
-    if uploaded_files:
-        image_parts = []
-        cols = st.columns(len(uploaded_files))
-        for i, file in enumerate(uploaded_files):
-            img = Image.open(file)
-            image_parts.append(img)
-            cols[i].image(img, use_container_width=True, caption=f"Page {i+1}")
-        
-        if st.button(f"✨ Analyser ces {len(uploaded_files)} images"):
-            with st.spinner("L'IA compile les informations..."):
-                try:
-                    prompt = """Analyse ces images qui constituent une recette.
-                    Synthétise les informations.
-                    Retourne UNIQUEMENT un objet JSON valide avec ces clés exactes :
-                    {
-                      "nom": "Titre",
-                      "categorie": "Apéro, Entrée, Plat, Dessert ou Boisson",
-                      "ingredients": ["ingrédient 1", "ingrédient 2"],
-                      "instructions": ["étape 1", "étape 2"],
-                      "portions": "Un nombre entier représentant le nombre de personnes (mets 4 si non précisé)"
-                    }"""
-                    
-                    response = model.generate_content([prompt, *image_parts])
-                    clean_json = response.text.replace('```json', '').replace('```', '').strip()
-                    data = json.loads(clean_json)
-                    
-                    ingredients_texte = "\n- ".join(data['ingredients']) if isinstance(data['ingredients'], list) else str(data['ingredients'])
-                    instructions_texte = "\n- ".join(data['instructions']) if isinstance(data['instructions'], list) else str(data['instructions'])
-                    
-                    aujourdhui = str(datetime.date.today())
-                    nouvelle_ligne = [aujourdhui, str(data['nom']), str(data['categorie']), ingredients_texte, instructions_texte, str(data.get('portions', '4'))]
-                    worksheet.append_row(nouvelle_ligne)
-                    
-                    st.session_state.df = load_data()
-                    st.success(f"Magique ! '{data['nom']}' sauvegardée pour {data.get('portions', 4)} personnes.")
-                    st.balloons()
-                    
-                except Exception as e:
-                    st.error(f"Erreur lors de l'analyse : {e}")
+    prompt_base = """
+    Analyse les informations suivantes qui constituent une recette de cuisine.
+    Synthétise les informations (enlève le blabla inutile).
+    Retourne UNIQUEMENT un objet JSON valide avec ces clés exactes :
+    {
+      "nom": "Titre",
+      "categorie": "Apéro, Entrée, Plat, Dessert ou Boisson",
+      "ingredients": ["ingrédient 1", "ingrédient 2"],
+      "instructions": ["étape 1", "étape 2"],
+      "portions": "Un nombre entier (mets 4 si non précisé)"
+    }
+    """
 
-# --- ONGLET 2 : COLLECTION ---
+    if mode == "🔗 Via un Lien (Marmiton, YouTube...)":
+        url = st.text_input("Colle le lien de la recette ici :")
+        if st.button("🌐 Extraire la recette"):
+            with st.spinner("L'IA navigue sur le web et lit la recette..."):
+                try:
+                    texte_extrait = ""
+                    # CAS 1 : YOUTUBE
+                    if "youtube.com" in url or "youtu.be" in url:
+                        # On trouve l'ID de la vidéo
+                        match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
+                        if match:
+                            video_id = match.group(1)
+                            # On récupère les sous-titres (français ou anglais par défaut)
+                            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['fr', 'en'])
+                            texte_extrait = " ".join([t['text'] for t in transcript])
+                        else:
+                            st.error("Lien YouTube invalide.")
+                    
+                    # CAS 2 : SITES WEB (Marmiton, Blogs...)
+                    else:
+                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                        response = requests.get(url, headers=headers)
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        # On récupère tout le texte de la page
+                        texte_extrait = soup.get_text(separator=' ', strip=True)
+
+                    if texte_extrait:
+                        # On envoie le texte extrait à Gemini (limité à 50 000 caractères pour éviter de saturer l'IA)
+                        prompt_final = prompt_base + f"\n\nTexte à analyser :\n{texte_extrait[:50000]}"
+                        rep = model.generate_content(prompt_final)
+                        clean_json = rep.text.replace('```json', '').replace('```', '').strip()
+                        data = json.loads(clean_json)
+                        sauvegarder_recette(data)
+                    else:
+                        st.error("Je n'ai pas pu extraire de texte de ce lien.")
+
+                except Exception as e:
+                    st.error(f"Aïe, impossible de lire ce lien. Le site bloque peut-être l'accès. (Erreur: {e})")
+
+    else:
+        # MODE PHOTOS (Ton code existant)
+        st.write("Charge une ou plusieurs photos d'une même recette.")
+        uploaded_files = st.file_uploader("Choisis tes images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+        
+        if uploaded_files:
+            image_parts = []
+            cols = st.columns(len(uploaded_files))
+            for i, file in enumerate(uploaded_files):
+                img = Image.open(file)
+                image_parts.append(img)
+                cols[i].image(img, use_container_width=True, caption=f"Page {i+1}")
+            
+            if st.button(f"✨ Analyser ces {len(uploaded_files)} images"):
+                with st.spinner("L'IA lit les images..."):
+                    try:
+                        response = model.generate_content([prompt_base, *image_parts])
+                        clean_json = response.text.replace('```json', '').replace('```', '').strip()
+                        data = json.loads(clean_json)
+                        sauvegarder_recette(data)
+                    except Exception as e:
+                        st.error(f"Erreur lors de l'analyse : {e}")
+
+# --- ONGLET 2 : COLLECTION (Reste inchangé) ---
 with tabs[1]:
     search = st.text_input("🔍 Rechercher une recette...")
     df_filtered = st.session_state.df.copy()
@@ -126,10 +174,9 @@ with tabs[1]:
             
             if not df_affiche.empty:
                 for real_index, row in df_affiche.iloc[::-1].iterrows():
-                    
                     with st.expander(f"👩‍🍳 {row.get('nom', 'Sans nom')} ({row.get('catégorie', 'Plat')})"):
                         
-                        # --- BOUTON D'ÉDITION DE BASE ---
+                        # Bouton Édition
                         with st.popover("✏️ Modifier"):
                             with st.form(key=f"form_edit_{real_index}_{cat_actuelle}"):
                                 nouveau_nom = st.text_input("Nom", value=row.get('nom', ''))
@@ -138,22 +185,29 @@ with tabs[1]:
                                 index_cat = list_cat.index(cat_actuelle_form) if cat_actuelle_form in list_cat else 2
                                 nouvelle_cat = st.selectbox("Catégorie", list_cat, index=index_cat)
                                 
+                                port_actuelle_form = row.get('portions', '4')
+                                port_actuelle_form = int(port_actuelle_form) if str(port_actuelle_form).isdigit() else 4
+                                nouvelles_portions = st.number_input("Portions par défaut", min_value=1, max_value=50, value=port_actuelle_form)
+                                
                                 if st.form_submit_button("💾 Enregistrer"):
                                     sheet_row = real_index + 2 
                                     with st.spinner("Mise à jour du Google Sheets..."):
                                         worksheet.update_cell(sheet_row, 2, nouveau_nom)
                                         worksheet.update_cell(sheet_row, 3, nouvelle_cat)
+                                        worksheet.update_cell(sheet_row, 6, str(nouvelles_portions))
+                                        
                                         st.session_state.df.at[real_index, 'nom'] = nouveau_nom
                                         st.session_state.df.at[real_index, 'catégorie'] = nouvelle_cat
+                                        st.session_state.df.at[real_index, 'portions'] = str(nouvelles_portions)
+                                        st.session_state[f"current_port_{real_index}"] = nouvelles_portions
                                         st.rerun()
                         
                         st.divider()
 
-                        # --- MODULE D'AJUSTEMENT INTELLIGENT DES PORTIONS ---
+                        # Ajustement intelligent
                         port_orig_str = row.get('portions', '4')
                         port_orig = int(port_orig_str) if str(port_orig_str).isdigit() else 4
                         
-                        # Mémoire locale pour ne pas perdre la liste si on clique sur une case
                         ing_key = f"ing_display_{real_index}_{cat_actuelle}"
                         if ing_key not in st.session_state:
                             st.session_state[ing_key] = str(row.get('ingrédients', ''))
@@ -164,18 +218,13 @@ with tabs[1]:
                             new_portions = st.number_input("Nombre de personnes", min_value=1, max_value=50, value=st.session_state[f"current_port_{real_index}"], key=f"port_{real_index}_{cat_actuelle}")
                         
                         with col_p2:
-                            # Le bouton n'apparaît que si on a changé le nombre
                             if new_portions != st.session_state[f"current_port_{real_index}"]:
                                 if st.button("⚖️ Recalculer intelligemment", key=f"btn_ajust_{real_index}_{cat_actuelle}"):
                                     with st.spinner("Le chef recalcule avec bon sens..."):
-                                        prompt_scale = f"""
-                                        Adapte ces ingrédients initialement prévus pour {port_orig} personnes, pour {new_portions} personnes. 
-                                        Règle absolue : Garde du bon sens culinaire. Ne propose pas "0.6 saucisse" ou "1.3 oignon", arrondis à l'unité la plus logique. Ajuste les épices et les liquides proportionnellement.
-                                        Renvoie UNIQUEMENT la nouvelle liste d'ingrédients, avec un ingrédient par ligne commençant par un tiret (-). Ne fais pas de phrase d'introduction.
-                                        
-                                        Ingrédients originaux :
-                                        {row.get('ingrédients', '')}
-                                        """
+                                        prompt_scale = f"""Adapte ces ingrédients initialement prévus pour {port_orig} personnes, pour {new_portions} personnes. 
+                                        Règle absolue : Garde du bon sens culinaire.
+                                        Renvoie UNIQUEMENT la nouvelle liste d'ingrédients, avec un ingrédient par ligne commençant par un tiret (-).
+                                        Ingrédients originaux :\n{row.get('ingrédients', '')}"""
                                         rep = model.generate_content(prompt_scale)
                                         st.session_state[ing_key] = rep.text.replace('```', '').strip()
                                         st.session_state[f"current_port_{real_index}"] = new_portions
@@ -183,11 +232,10 @@ with tabs[1]:
 
                         st.divider()
 
-                        # --- PARTIE RECETTE ---
+                        # Recette
                         col1, col2 = st.columns(2)
                         with col1:
                             st.markdown("#### 🛒 Ingrédients")
-                            # On affiche la liste (originale ou recalculée par l'IA)
                             for j, line in enumerate(st.session_state[ing_key].split('\n')):
                                 clean_line = line.strip().lstrip('-').strip()
                                 if clean_line:
@@ -198,7 +246,7 @@ with tabs[1]:
                         
                         st.divider()
 
-                        # --- PARTIE ASSISTANT IA ---
+                        # Assistant
                         st.markdown("#### 💬 L'Assistant du Chef")
                         chat_key = f"chat_history_{real_index}"
                         if chat_key not in st.session_state:
@@ -213,15 +261,12 @@ with tabs[1]:
                             with st.chat_message("user"):
                                 st.markdown(question)
 
-                            contexte_recette = f"""
-                            Tu es un chef assistant. L'utilisateur cuisine ceci :
+                            contexte_recette = f"""Tu es un chef assistant. L'utilisateur cuisine ceci :
                             TITRE : {row.get('nom')}
                             INGRÉDIENTS : {st.session_state[ing_key]}
                             INSTRUCTIONS : {row.get('instructions')}
-
                             Question : "{question}"
-                            Réponds brièvement pour l'aider, en te basant sur cette recette.
-                            """
+                            Réponds brièvement pour l'aider, en te basant sur cette recette."""
 
                             with st.chat_message("assistant"):
                                 with st.spinner("Le chef réfléchit..."):
