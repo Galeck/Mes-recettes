@@ -95,16 +95,29 @@ with tabs[1]:
         
         # Affichage (de la plus récente à la plus ancienne)
         for i, row in df_affiche.iloc[::-1].iterrows():
-            with st.expander(f"{row.get('catégorie', '')} | {row.get('nom', '')}"):
+            with st.expander(f"{row.get('catégorie', 'Plat')} | {row.get('nom', 'Sans nom')}"):
                 col1, col2 = st.columns(2)
+                
                 with col1:
                     st.markdown("**🛒 Ingrédients :**")
-                    st.write(row.get('ingrédients', ''))
+                    # --- NOUVEAU : SYSTÈME DE CASES À COCHER ---
+                    ingredients_texte = str(row.get('ingrédients', ''))
+                    # On découpe le texte à chaque retour à la ligne
+                    lignes_ingredients = ingredients_texte.split('\n')
+                    
+                    # On crée une case à cocher pour chaque ingrédient
+                    for j, ligne in enumerate(lignes_ingredients):
+                        # On nettoie le texte (on enlève les tirets et les espaces inutiles)
+                        ing_propre = ligne.strip().lstrip('-').strip()
+                        if ing_propre: # On vérifie que la ligne n'est pas vide
+                            # La 'key' doit être unique pour que Streamlit ne mélange pas les cases
+                            st.checkbox(ing_propre, key=f"chk_{i}_{j}")
+                    # -------------------------------------------
+                            
                 with col2:
                     st.markdown("**👨‍🍳 Instructions :**")
                     st.write(row.get('instructions', ''))
                 
-                # Le bouton de suppression a été remplacé par un conseil pratique
-                st.info("💡 Pour modifier un mot ou supprimer cette recette, ouvre simplement ton fichier 'Mes Recettes CookSnap' sur Google Drive !")
+                st.info("💡 Pour modifier ou supprimer, ouvre ton fichier Google Sheets !")
     else:
         st.info("Ton grimoire est vide. Va vite scanner une recette !")
