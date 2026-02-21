@@ -101,6 +101,7 @@ with tabs[0]:
                     st.error(f"Erreur lors de l'analyse : {e}")
 
 # --- ONGLET 2 : COLLECTION ---
+# --- ONGLET 2 : COLLECTION ---
 with tabs[1]:
     search = st.text_input("🔍 Rechercher une recette...")
     df_filtered = st.session_state.df.copy()
@@ -117,42 +118,37 @@ with tabs[1]:
         cat_actuelle = categories[i]
         
         with onglet:
-            # On filtre selon l'onglet choisi
             if cat_actuelle == "Toutes":
                 df_affiche = df_filtered
             else:
                 df_affiche = df_filtered[df_filtered['catégorie'].str.contains(cat_actuelle, case=False, na=False)]
             
             if not df_affiche.empty:
-                # real_index est super important pour trouver la bonne ligne dans Google Sheets
                 for real_index, row in df_affiche.iloc[::-1].iterrows():
                     
                     with st.expander(f"👩‍🍳 {row.get('nom', 'Sans nom')} ({row.get('catégorie', 'Plat')})"):
                         
                         # --- BOUTON D'ÉDITION ---
                         with st.popover("✏️ Modifier le nom / catégorie"):
-                            with st.form(key=f"form_edit_{real_index}"):
+                            # 🚀 CORRECTIF : On ajoute `cat_actuelle` pour rendre la clé unique par onglet
+                            with st.form(key=f"form_edit_{real_index}_{cat_actuelle}"):
                                 nouveau_nom = st.text_input("Nom", value=row.get('nom', ''))
                                 
-                                # On gère la catégorie par défaut
                                 cat_actuelle_form = row.get('catégorie', 'Plat')
                                 list_cat = ["Apéro", "Entrée", "Plat", "Dessert", "Boisson", "Autre"]
                                 index_cat = list_cat.index(cat_actuelle_form) if cat_actuelle_form in list_cat else 2
                                 nouvelle_cat = st.selectbox("Catégorie", list_cat, index=index_cat)
                                 
                                 if st.form_submit_button("💾 Enregistrer"):
-                                    # La ligne 1 du Sheet = En-têtes. Index 0 du DataFrame = Ligne 2 du Sheet.
                                     sheet_row = real_index + 2 
                                     
                                     with st.spinner("Mise à jour du Google Sheets..."):
-                                        # Colonne 2 = Nom, Colonne 3 = Catégorie
                                         worksheet.update_cell(sheet_row, 2, nouveau_nom)
                                         worksheet.update_cell(sheet_row, 3, nouvelle_cat)
                                         
-                                        # On met à jour l'appli en direct
                                         st.session_state.df.at[real_index, 'nom'] = nouveau_nom
                                         st.session_state.df.at[real_index, 'catégorie'] = nouvelle_cat
-                                        st.rerun() # Rafraîchit l'affichage
+                                        st.rerun()
                         
                         st.divider()
 
@@ -164,7 +160,8 @@ with tabs[1]:
                             for j, line in enumerate(ing_text.split('\n')):
                                 clean_line = line.strip().lstrip('-').strip()
                                 if clean_line:
-                                    st.checkbox(clean_line, key=f"chk_{real_index}_{j}")
+                                    # 🚀 CORRECTIF : Clé unique pour les cases à cocher
+                                    st.checkbox(clean_line, key=f"chk_{real_index}_{j}_{cat_actuelle}")
                         with col2:
                             st.markdown("#### 🔪 Instructions")
                             st.write(row.get('instructions', ''))
@@ -173,6 +170,7 @@ with tabs[1]:
 
                         # --- PARTIE ASSISTANT IA ---
                         st.markdown("#### 💬 L'Assistant du Chef")
+                        # La mémoire du chat reste commune à la recette !
                         chat_key = f"chat_history_{real_index}"
                         if chat_key not in st.session_state:
                             st.session_state[chat_key] = []
@@ -181,7 +179,8 @@ with tabs[1]:
                             with st.chat_message(message["role"]):
                                 st.markdown(message["content"])
 
-                        if question := st.chat_input(f"Une question sur '{row.get('nom')}' ?", key=f"input_{real_index}"):
+                        # 🚀 CORRECTIF : Clé unique pour la barre de chat
+                        if question := st.chat_input(f"Une question sur '{row.get('nom')}' ?", key=f"input_{real_index}_{cat_actuelle}"):
                             st.session_state[chat_key].append({"role": "user", "content": question})
                             with st.chat_message("user"):
                                 st.markdown(question)
