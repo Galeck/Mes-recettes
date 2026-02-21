@@ -3,3 +3,6 @@ pandas
 Pillow
 google-generativeai>=0.7.0
 gspread
+requests
+beautifulsoup4
+youtube-transcript-api
