@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 
-st.set_page_config(page_title="CookSnap Cloud", page_icon="🍳", layout="centered")
+st.set_page_config(page_title="Gassolette", page_icon="🍳", layout="centered")
 
 # --- BANNIÈRE DÉCORATIVE ---
 if os.path.exists("banner.jpg"):
@@ -19,7 +19,7 @@ if os.path.exists("banner.jpg"):
 elif os.path.exists("banner.png"):
     st.image("banner.png", use_container_width=True)
 
-st.title("🍳 CookSnap Cloud")
+st.title("🍳 Gassolette")
 st.caption("Ton assistant culinaire personnel, propulsé par l'IA.")
 
 # --- CONNEXIONS SÉCURISÉES ---
